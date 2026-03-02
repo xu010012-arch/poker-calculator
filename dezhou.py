@@ -48,7 +48,7 @@ def calculate_poker_stats(hole_cards, board_cards, num_opp, sims=5000):
 CLASS_MAP = {1:"同花顺", 2:"四条", 3:"葫芦", 4:"同花", 5:"顺子", 6:"三条", 7:"两对", 8:"一对", 9:"高牌"}
 
 # --- UI 页面布局 ---
-st.set_page_config(page_title="德州助手 Pro 50K", page_icon="🃏", layout="centered")
+st.set_page_config(page_title="德州助手 ", page_icon="🃏", layout="centered")
 
 # CSS 注入
 st.markdown("""
@@ -59,7 +59,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🃏 德州助手 Pro (50K 精度版)")
+st.title("🃏 德州助手)")
 
 # 侧边栏：调整精度上限
 with st.sidebar:
@@ -163,3 +163,4 @@ if st.button("🚀 开始全深度决策分析", type="primary", use_container_w
 
 if st.button("🔄 重置当前输入"):
     st.rerun()
+
