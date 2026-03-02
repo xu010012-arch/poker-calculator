@@ -1,179 +1,135 @@
 import streamlit as st
 import random
+import pandas as pd
 from treys import Card, Evaluator
 
-
-# --- 核心计算逻辑 ---
-def calculate_win_rate(hole_cards_str, community_cards_str, num_opponents=1, simulations=5000):
+# --- 核心计算引擎 (增加牌型记录) ---
+def calculate_poker_stats(hole_cards, board_cards, num_opp, sims=5000):
     evaluator = Evaluator()
-    ranks = '23456789TJQKA'
-    suits = 'shdc'
-    all_cards_str = [r + s for r in ranks for s in suits]
+    ranks, suits = '23456789TJQKA', 'shdc'
+    deck = [r+s for r in ranks for s in suits]
+    
+    wins, ties = 0, 0
+    # 用于记录各种牌型出现的次数
+    hand_counts = {i: 0 for i in range(1, 10)} 
+    
+    my_hand = [Card.new(c) for c in hole_cards]
+    board = [Card.new(c) for c in board_cards]
+    used = hole_cards + board_cards
+    
+    for _ in range(sims):
+        rem = [c for c in deck if c not in used]
+        # 补齐 5 张公共牌
+        final_board_strs = board_cards + random.sample(rem, 5 - len(board))
+        final_board = [Card.new(c) for c in final_board_strs]
+        
+        # 重新计算剩余牌堆，给对手发牌
+        rem_after_board = [c for c in deck if c not in (hole_cards + final_board_strs)]
+        opp_cards = random.sample(rem_after_board, num_opp * 2)
+        
+        # 我的表现
+        my_score = evaluator.evaluate(final_board, my_hand)
+        my_class = evaluator.get_rank_class(my_score)
+        hand_counts[my_class] += 1
+        
+        # 对手表现
+        opp_scores = [evaluator.evaluate(final_board, [Card.new(opp_cards[i*2]), Card.new(opp_cards[i*2+1])]) for i in range(num_opp)]
+        best_opp = min(opp_scores)
+        
+        if my_score < best_opp: wins += 1
+        elif my_score == best_opp: ties += 1
+            
+    win_rate = (wins + ties / 2.0) / sims
+    # 转换为百分比
+    hand_probs = {k: (v / sims) for k, v in hand_counts.items()}
+    return win_rate, hand_probs
 
-    wins = 0
-    ties = 0
+# --- 映射表 ---
+CLASS_MAP = {
+    1: "皇家同花顺/同花顺",
+    2: "四条 (Quads)",
+    3: "葫芦 (Full House)",
+    4: "同花 (Flush)",
+    5: "顺子 (Straight)",
+    6: "三条 (Set/Trips)",
+    7: "两对 (Two Pair)",
+    8: "一对 (One Pair)",
+    9: "高牌 (High Card)"
+}
 
-    my_hand = [Card.new(c) for c in hole_cards_str]
-    board = [Card.new(c) for c in community_cards_str]
-    known_cards_str = hole_cards_str + community_cards_str
+# --- UI 设置 ---
+st.set_page_config(page_title="德州助手 Pro+", page_icon="🃏", layout="centered")
+st.title("🃏 德州助手 Pro+ (牌型统计版)")
 
-    for _ in range(simulations):
-        remaining_cards_str = [c for c in all_cards_str if c not in known_cards_str]
-
-        needed_community = 5 - len(board)
-        drawn_for_board_str = random.sample(remaining_cards_str, needed_community)
-        current_board = board + [Card.new(c) for c in drawn_for_board_str]
-
-        remaining_cards_str = [c for c in remaining_cards_str if c not in drawn_for_board_str]
-        drawn_for_opponents_str = random.sample(remaining_cards_str, num_opponents * 2)
-
-        my_score = evaluator.evaluate(current_board, my_hand)
-
-        opponents_scores = []
-        for i in range(num_opponents):
-            opp_hand_str = drawn_for_opponents_str[i * 2: i * 2 + 2]
-            opp_hand = [Card.new(c) for c in opp_hand_str]
-            opp_score = evaluator.evaluate(current_board, opp_hand)
-            opponents_scores.append(opp_score)
-
-        best_opp_score = min(opponents_scores)
-
-        if my_score < best_opp_score:
-            wins += 1
-        elif my_score == best_opp_score:
-            ties += 1
-
-    return (wins + ties / 2.0) / simulations
-
-
-# --- 下注建议逻辑 ---
-def get_betting_advice(win_rate, num_opponents):
-    # 计算你在当前人数下的"平均公平胜率"
-    fair_share = 1.0 / (num_opponents + 1)
-
-    # 计算你的优势倍数
-    advantage_ratio = win_rate / fair_share
-
-    if advantage_ratio >= 1.5:
-        return "🔥 **绝对优势 (Strong)**", "你的牌力远超平均水平。建议：**激进下注 (Value Bet) 或 加注 (Raise)**。建立底池，争取最大化收益。"
-    elif 1.1 <= advantage_ratio < 1.5:
-        return "👍 **略微优势 (Marginal)**", "你拥有一定的胜率优势。建议：**试探性下注 (Bet) 或 跟注 (Call)**。控制底池大小，观察对手反应。"
-    elif 0.8 <= advantage_ratio < 1.1:
-        return "⚖️ **势均力敌 (Draw/Weak)**", "胜率接近平均水平，可能在听牌或中等牌力。建议：**过牌 (Check) 免费看牌，或在赔率合适时跟注 (Call)**。避免主动造大底池。"
-    else:
-        return "🧊 **处于劣势 (Disadvantage)**", "胜率明显落后。建议：如果对手下注，果断 **弃牌 (Fold)**；如果无人下注，可以选择 **过牌 (Check)**。除非你有极好的诈唬时机，否则不要往底池投入筹码。"
-
-
-# --- 网页 UI 设计 ---
-st.set_page_config(page_title="德州扑克胜率计算器", page_icon="🃏", layout="centered")
-st.title("🃏 德州扑克胜率计算器")
-
-# 定义点数和花色的映射
-ranks_display = ['A', 'K', 'Q', 'J', '10', '9', '8', '7', '6', '5', '4', '3', '2']
-ranks_value = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2']
-rank_map = dict(zip(ranks_display, ranks_value))
-
-suits_display = ['♠ 黑桃', '♥ 红桃', '♦ 方块', '♣ 梅花']
-suits_value = ['s', 'h', 'd', 'c']
-suit_map = dict(zip(suits_display, suits_value))
-
-# --- 侧边栏：设置 ---
 with st.sidebar:
-    st.header("⚙️ 牌局设置")
-    num_opponents = st.slider("对手数量", min_value=1, max_value=8, value=1)
-    simulations = st.select_slider("模拟精度", options=[1000, 5000, 10000, 20000], value=5000)
+    st.header("⚙️ 模拟设置")
+    num_opp = st.slider("对手人数", 1, 8, 1)
+    sims = st.selectbox("模拟精度", [1000, 5000, 10000], index=1)
+    st.divider()
+    st.caption("注：牌型概率为您在河牌圈最终成牌的预期。")
 
-# ==========================================
-# 主界面：选牌区
-# ==========================================
+# 1. 牌面输入
+st.write("### 1. 牌面输入")
+r_opts = ['A', 'K', 'Q', 'J', '10', '9', '8', '7', '6', '5', '4', '3', '2']
+r_vals = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2']
+s_opts = ['♠', '♥', '♦', '♣']
+s_vals = ['s', 'h', 'd', 'c']
+r_map, s_map = dict(zip(r_opts, r_vals)), dict(zip(s_opts, s_vals))
 
-st.subheader("1. 选择你的底牌")
-col1, col2, col3, col4 = st.columns(4)
+c1, c2 = st.columns(2)
 with col1:
-    h1_r = st.selectbox("底牌 1 点数", ranks_display, index=0, key="h1_r")
+    st.caption("我的底牌")
+    h_c1, h_c2 = st.columns(2)
+    h1r = h_c1.selectbox("P1", r_opts, key="h1r", label_visibility="collapsed")
+    h1s = h_c2.selectbox("S1", s_opts, key="h1s", label_visibility="collapsed")
+    h2r = h_c1.selectbox("P2", r_opts, index=1, key="h2r", label_visibility="collapsed")
+    h2s = h_c2.selectbox("S2", s_opts, index=1, key="h2s", label_visibility="collapsed")
 with col2:
-    h1_s = st.selectbox("底牌 1 花色", suits_display, index=0, key="h1_s")
-with col3:
-    h2_r = st.selectbox("底牌 2 点数", ranks_display, index=1, key="h2_r")
-with col4:
-    h2_s = st.selectbox("底牌 2 花色", suits_display, index=1, key="h2_s")
+    st.caption("公共牌 (未发选 -)")
+    f1, f2, f3, t, r = st.columns(5)
+    fr1 = f1.selectbox("F1", ["-"]+r_opts); fs1 = f1.selectbox("S1", s_opts, key="fs1", label_visibility="collapsed")
+    fr2 = f2.selectbox("F2", ["-"]+r_opts); fs2 = f2.selectbox("S2", s_opts, key="fs2", label_visibility="collapsed")
+    fr3 = f3.selectbox("F3", ["-"]+r_opts); fs3 = f3.selectbox("S3", s_opts, key="fs3", label_visibility="collapsed")
+    tr = t.selectbox("T", ["-"]+r_opts); ts = t.selectbox("TS", s_opts, key="ts", label_visibility="collapsed")
+    rr = r.selectbox("R", ["-"]+r_opts); rs = r.selectbox("RS", s_opts, key="rs", label_visibility="collapsed")
+
+# 2. 筹码数据
+st.write("### 2. 底池与赔率")
+p_col1, p_col2 = st.columns(2)
+pot_size = p_col1.number_input("当前总底池 ($)", min_value=0, value=100)
+call_amount = p_col2.number_input("需跟注金额 ($)", min_value=0, value=20)
 
 st.divider()
 
-st.subheader("2. 选择公共牌")
-
-# 翻牌区
-st.markdown("##### 翻牌 (Flop)")
-f_col1, f_col2, f_col3 = st.columns(3)
-with f_col1:
-    f1_r = st.selectbox("第 1 张", ["(未发)"] + ranks_display, index=0, key="f1_r")
-    f1_s = st.selectbox("花色 1", suits_display, label_visibility="collapsed", key="f1_s")
-with f_col2:
-    f2_r = st.selectbox("第 2 张", ["(未发)"] + ranks_display, index=0, key="f2_r")
-    f2_s = st.selectbox("花色 2", suits_display, label_visibility="collapsed", key="f2_s")
-with f_col3:
-    f3_r = st.selectbox("第 3 张", ["(未发)"] + ranks_display, index=0, key="f3_r")
-    f3_s = st.selectbox("花色 3", suits_display, label_visibility="collapsed", key="f3_s")
-
-# 转牌与河牌区
-st.markdown("##### 转牌 & 河牌 (Turn & River)")
-tr_col1, tr_col2, _ = st.columns([1, 1, 1])
-with tr_col1:
-    t_r = st.selectbox("转牌 (第 4 张)", ["(未发)"] + ranks_display, index=0, key="t_r")
-    t_s = st.selectbox("转牌花色", suits_display, label_visibility="collapsed", key="t_s")
-with tr_col2:
-    r_r = st.selectbox("河牌 (第 5 张)", ["(未发)"] + ranks_display, index=0, key="r_r")
-    r_s = st.selectbox("河牌花色", suits_display, label_visibility="collapsed", key="r_s")
-
-# ==========================================
-# 按钮交互区
-# ==========================================
-st.write("---")
-btn_col1, btn_col2 = st.columns([3, 1])  # 让计算按钮更宽，重置按钮稍窄
-with btn_col1:
-    calc_btn = st.button("🚀 计算胜率并获取建议", type="primary", use_container_width=True)
-with btn_col2:
-    reset_btn = st.button("🔄 一键清空", use_container_width=True)
-
-# 处理重置逻辑
-if reset_btn:
-    # 清空 Streamlit 的 session state 来重置所有输入框
-    st.session_state.clear()
-    st.rerun()
-
-# 处理计算逻辑
-if calc_btn:
-    hole1 = rank_map[h1_r] + suit_map[h1_s]
-    hole2 = rank_map[h2_r] + suit_map[h2_s]
-
-    community_cards = []
-    selections = [(f1_r, f1_s), (f2_r, f2_s), (f3_r, f3_s), (t_r, t_s), (r_r, r_s)]
-    for r_val, s_val in selections:
-        if r_val != "(未发)":
-            community_cards.append(rank_map[r_val] + suit_map[s_val])
-
-    all_selected = [hole1, hole2] + community_cards
-
-    if hole1 == hole2:
-        st.error("⚠️ 两张底牌不能是同一张牌！")
-    elif len(all_selected) != len(set(all_selected)):
-        st.error("⚠️ 你选出的牌中有重复的牌，请仔细检查！")
+# 3. 计算展示
+if st.button("🚀 开始全深度分析", type="primary", use_container_width=True):
+    h = [r_map[h1r]+s_map[h1s], r_map[h2r]+s_map[h2s]]
+    b = []
+    for r, s in [(fr1, fs1), (fr2, fs2), (fr3, fs3), (tr, ts), (rr, rs)]:
+        if r != "-": b.append(r_map[r]+s_map[s])
+    
+    if len(set(h+b)) != len(h+b):
+        st.error("卡牌重复！")
     else:
-        with st.spinner('正在进行蒙特卡洛模拟，请稍候...'):
-            win_rate = calculate_win_rate([hole1, hole2], community_cards, num_opponents, simulations)
+        with st.spinner('AI 正在模拟数万种发牌可能...'):
+            win_rate, hand_probs = calculate_poker_stats(h, b, num_opp, sims)
+            
+            # 顶部核心指标
+            pot_odds = call_amount / (pot_size + call_amount) if (pot_size + call_amount) > 0 else 0
+            
+            m1, m2 = st.columns(2)
+            m1.metric("预期胜率", f"{win_rate*100:.2f}%")
+            m2.metric("跟注保本胜率", f"{pot_odds*100:.2f}%")
+            
+            if win_rate > pot_odds:
+                st.success("✅ **数学领先 (EV+)**: 长期看，此举盈利。")
+            else:
+                st.warning("❌ **数学落后 (EV-)**: 长期看，此举亏损。")
+            
+            # 牌型概率表
+            st.write("#### 📊 最终成牌概率统计")
+            prob_data = [{"牌型": CLASS_MAP[k], "概率": f"{v*100:.1f}%"} for k, v in hand_probs.items() if v > 0]
+            st.table(pd.DataFrame(prob_data))
 
-            # 分割线隔离结果区
-            st.divider()
-
-            # 显示胜率
-            st.metric(label=f"📊 对抗 {num_opponents} 名随机手牌对手的预期胜率", value=f"{win_rate * 100:.2f}%")
-
-            # 获取并显示下注建议
-            status_title, advice_text = get_betting_advice(win_rate, num_opponents)
-
-            st.markdown(f"### 💡 当前牌力评级: {status_title}")
-            st.info(advice_text)
-
-            # 增加免责声明
-            st.caption(
-                "⚠️ **免责声明**：此建议仅基于对抗“随机手牌”的纯数学胜率计算得出。实战中，请务必结合对手的打法风格（松/紧）、位置、筹码深度以及底池赔率（Pot Odds）综合判断。")
+if st.button("🔄 重置状态"):
+    st.rerun()
