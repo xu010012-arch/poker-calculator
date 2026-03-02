@@ -59,7 +59,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🃏 德州助手)")
+st.title("🃏 德州助手")
 
 # 侧边栏：调整精度上限
 with st.sidebar:
@@ -163,4 +163,5 @@ if st.button("🚀 开始全深度决策分析", type="primary", use_container_w
 
 if st.button("🔄 重置当前输入"):
     st.rerun()
+
 
